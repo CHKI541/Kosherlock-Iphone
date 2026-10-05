@@ -55,12 +55,20 @@ def test_profile():
     check(keys <= KNOWN_RESTRICTION_KEYS, f"claves no registradas: {keys - KNOWN_RESTRICTION_KEYS}")
     check("allowHostPairing" in r and r["allowHostPairing"] is False, "falta allowHostPairing=False")
     check("allowPairing" not in r, "quedó la clave inventada allowPairing")
+    check("allowCloudPrivateRelay" in r and r["allowCloudPrivateRelay"] is False, "falta allowCloudPrivateRelay=False")
+    check("allowWebDistributionAppInstallation" in r and r["allowWebDistributionAppInstallation"] is False, "falta allowWebDistributionAppInstallation=False")
     for e in ESSENTIAL_APPS:
         check(e in r["whitelistedAppBundleIDs"], f"falta app esencial {e}")
     check(r["whitelistedAppBundleIDs"] == r["allowListedAppBundleIDs"], "las dos listas blancas difieren")
     for k in ("allowUIConfigurationProfileInstallation", "allowVPNCreation",
               "allowEnterpriseAppTrust", "allowAppClips", "allowAppInstallation"):
         check(r.get(k) is False, f"piso anti-evasión: {k} debería ser False")
+
+    # Identificadores estables
+    p1 = parse(generate_mobileconfig())
+    p2 = parse(generate_mobileconfig())
+    check(p1["PayloadIdentifier"] == p2["PayloadIdentifier"] == "com.kosherlock.ios.profile",
+          "PayloadIdentifier debe ser estable entre exportaciones para reemplazo limpio")
 
     # Sin lista blanca no debe escribirse ninguna lista (dejaría solo 2 apps)
     r0 = payload(parse(generate_mobileconfig(allowed_bundle_ids=[])), "com.apple.applicationaccess")
@@ -85,15 +93,17 @@ def test_profile():
                                        "PayloadUUID")), f"{web}/{dns}: payload incompleto")
         w = payload(p, "com.apple.webcontent-filter")
         if web == "block_all":
-            check(w and w["WhitelistedBookmarks"], "block_all sin marcador inerte")
+            check(w and w["WhitelistedBookmarks"] and w["AllowListBookmarks"], "block_all sin marcador inerte")
             check("FilterBrowsers" not in w and "FilterSockets" not in w, "claves de Plugin en filtro BuiltIn")
         if web == "blacklist":
             check(w and any(u.startswith("https://youtube.com") for u in w["BlacklistedURLs"]),
                   "blacklist no contiene youtube.com")
+            check("DenyListURLs" in w and "BlacklistedURLs" in w, "falta DenyListURLs o BlacklistedURLs")
             check(not any("*" in u for u in w["BlacklistedURLs"]), "comodines en BlacklistedURLs")
             check(w.get("AutoFilterEnabled") is True, "blacklist sin AutoFilterEnabled")
         if web == "whitelist":
             check(w["WhitelistedBookmarks"][0]["URL"] == "https://example.com", "whitelist no normalizó URL")
+            check("AllowListBookmarks" in w, "whitelist sin AllowListBookmarks")
         d = payload(p, "com.apple.dnsSettings.managed")
         check((d is None) == (dns == "none"), f"{web}/{dns}: payload DNS incorrecto")
         if d is not None:
@@ -101,11 +111,13 @@ def test_profile():
             check(d["DNSSettings"]["ServerURL"].startswith("https://"), "ServerURL sin https")
 
     # Errores esperados
+    too_many_domains = [f"ejemplo-bloqueado-{i}.com" for i in range(100)]  # genera 600 URLs
     for kw, what in [
         (dict(dns_filter_mode="nextdns", nextdns_id="  "), "NextDNS sin ID"),
         (dict(web_filter_mode="whitelist", allowed_urls=[]), "whitelist sin URLs"),
         (dict(web_filter_mode="blacklist", custom_blocked_domains=[],
               block_whatsapp_status_channels=False), "blacklist vacía"),
+        (dict(web_filter_mode="blacklist", custom_blocked_domains=too_many_domains), "límite 500 URLs excedido"),
         (dict(web_filter_mode="xyz"), "modo web desconocido"),
         (dict(dns_filter_mode="xyz"), "modo DNS desconocido"),
     ]:
@@ -156,7 +168,8 @@ def test_catalog():
         check(not dup if not isinstance(dup, tuple) else not dup[0], "aceptó ID duplicado")
         m2 = AppCatalogManager(data_file=f)
         check(any(a["id"] == "com.test.banco" for a in m2.apps), "no persistió en disco")
-        check(not is_confirmed(next(a for a in m2.apps if a["id"] == "com.test.banco")) or True, "n/a")
+        check(not is_confirmed(next(a for a in m2.apps if a["id"] == "com.test.banco")),
+              "app personalizada sin ID en CONFIRMED_IDS no debe figurar confirmada")
         m2.remove_custom_app("com.test.banco")
         m3 = AppCatalogManager(data_file=f)
         check(not any(a["id"] == "com.test.banco" for a in m3.apps), "no se borró del disco")
@@ -182,10 +195,22 @@ def test_server():
                 check(resp.headers.get("Content-Disposition") is None, "no debe haber Content-Disposition")
             with urllib.request.urlopen(local + "?x=1", timeout=5) as resp:
                 check(resp.read() == data, "query string rompió la ruta")
+
+            # Petición no autorizada sin token debe devolver 404
+            unauth = "http://127.0.0.1:18089/kosher.mobileconfig"
+            try:
+                urllib.request.urlopen(unauth, timeout=5)
+                check(False, "servidor aceptó petición sin token")
+            except urllib.error.HTTPError as e:
+                check(e.code == 404, f"código inesperado sin token: {e.code}")
+            except Exception:
+                pass
+
             img = s.generate_qr_image(size=200)
             check(img.size == (200, 200), "QR de tamaño incorrecto")
         finally:
             s.stop()
+            check(not s.is_running, "servidor no se detuvo correctamente")
 
 
 def test_gui():
@@ -223,7 +248,9 @@ def test_gui():
         app.select_all_visible()
         app.deselect_all()
         check(app.get_selected_bundle_ids() == [], "deselect_all no limpió")
+        check(app.build_profile_bytes() is None, "lista blanca vacía debe bloquear la exportación")
         # Error de usuario: NextDNS sin ID debe mostrar error y devolver None
+        app.apply_preset("basico")
         app.dns_filter_mode_var.set("nextdns")
         app.nextdns_id_var.set("")
         answers.clear()

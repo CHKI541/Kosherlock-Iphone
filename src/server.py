@@ -8,6 +8,7 @@ import socket
 import socketserver
 import threading
 import io
+import uuid
 import qrcode
 from PIL import Image
 
@@ -31,10 +32,12 @@ def get_local_ip():
 
 class ProfileHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
     profile_bytes = b""
-    filename = "kosher.mobileconfig"
+    expected_token = ""
 
     def do_GET(self):
-        if self.path.split("?")[0] in ["/", "/kosher.mobileconfig", "/profile"]:
+        clean_path = self.path.split("?")[0].strip("/")
+        expected = f"{self.expected_token}.mobileconfig" if self.expected_token else ""
+        if expected and clean_path == expected:
             self.send_response(200)
             # Content-type oficial de Apple para perfiles de configuración
             self.send_header("Content-Type", "application/x-apple-aspen-config; charset=utf-8")
@@ -44,7 +47,7 @@ class ProfileHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         else:
             self.send_response(404)
             self.end_headers()
-            self.wfile.write(b"No encontrado.")
+            self.wfile.write(b"No encontrado o enlace no autorizado.")
 
     def log_message(self, format, *args):
         # Silenciar logs para no saturar la consola
@@ -57,15 +60,19 @@ class ProfileServerManager:
         self.thread = None
         self.is_running = False
         self.current_url = ""
+        self.token = ""
         self.port = 8089
 
     def start(self, profile_bytes, port=8089):
         self.stop()
         self.port = port
+        token = uuid.uuid4().hex[:12]
+        self.token = token
         ProfileHTTPRequestHandler.profile_bytes = profile_bytes
+        ProfileHTTPRequestHandler.expected_token = token
 
         local_ip = get_local_ip()
-        self.current_url = f"http://{local_ip}:{self.port}/kosher.mobileconfig"
+        self.current_url = f"http://{local_ip}:{self.port}/{token}.mobileconfig"
 
         try:
             # Permitir reuso rápido de socket
@@ -88,6 +95,10 @@ class ProfileServerManager:
             return False, str(e)
 
     def stop(self):
+        ProfileHTTPRequestHandler.profile_bytes = b""
+        ProfileHTTPRequestHandler.expected_token = ""
+        self.token = ""
+        self.current_url = ""
         if self.server:
             try:
                 self.server.shutdown()

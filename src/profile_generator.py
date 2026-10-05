@@ -22,19 +22,28 @@ import uuid
 # Estas dos siempre tienen que estar para no dejar el equipo inusable.
 ESSENTIAL_APPS = ["com.apple.mobilephone", "com.apple.Preferences"]
 
+# Identificadores estables de Apple (PayloadIdentifier)
+# Apple utiliza el PayloadIdentifier para saber si una instalación debe REEMPLAZAR
+# un perfil existente o duplicarlo. Deben ser fijos para evitar acumulación de restricciones.
+PROFILE_IDENTIFIER = "com.kosherlock.ios.profile"
+RESTRICTIONS_IDENTIFIER = "com.kosherlock.ios.profile.restrictions"
+WEBFILTER_IDENTIFIER = "com.kosherlock.ios.profile.webfilter"
+DNS_IDENTIFIER = "com.kosherlock.ios.profile.dns"
+
 # Claves de Restrictions que escribe este generador. Lo usa el autotest para
 # detectar claves inventadas: si agregás una acá, tiene que existir en Apple.
 KNOWN_RESTRICTION_KEYS = {
     "whitelistedAppBundleIDs", "allowListedAppBundleIDs",
     "allowSafari", "allowAppInstallation", "allowUIConfigurationProfileInstallation",
-    "allowMarketplaceAppInstallation", "allowAppRemoval", "allowInAppPurchases",
+    "allowMarketplaceAppInstallation", "allowWebDistributionAppInstallation",
+    "allowAppRemoval", "allowInAppPurchases",
     "allowEraseContentAndSettings", "allowHostPairing", "allowAccountModification",
     "allowPasscodeModification", "allowAssistant", "allowAssistantWhileLocked",
     "allowAirDrop", "allowGameCenter", "allowMultiplayerGaming", "allowCamera",
     "allowScreenShot", "allowSharedStream", "allowDiagnosticSubmission",
     "forceLimitAdTracking", "allowUntrustedTLSPrompt",
     "allowSpotlightInternetResults", "allowVPNCreation", "allowEnterpriseAppTrust",
-    "allowAppClips", "allowAutomaticAppDownloads",
+    "allowAppClips", "allowAutomaticAppDownloads", "allowCloudPrivateRelay",
 }
 
 # URLs de Canales/Estados de WhatsApp. SOLO afectan enlaces abiertos en una vista
@@ -66,7 +75,7 @@ def _normalize_domain(raw):
     for prefix in ("https://", "http://"):
         if d.startswith(prefix):
             d = d[len(prefix):]
-    d = d.split("/")[0].strip(".")
+    d = d.split("/")[0].split(":")[0].strip(".")
     if d.startswith("www."):
         d = d[4:]
     return d
@@ -145,7 +154,7 @@ def generate_mobileconfig(
     r = {
         "PayloadType": "com.apple.applicationaccess",
         "PayloadVersion": 1,
-        "PayloadIdentifier": f"com.kosherlock.ios.restrictions.{rid}",
+        "PayloadIdentifier": RESTRICTIONS_IDENTIFIER,
         "PayloadUUID": rid,
         "PayloadDisplayName": "Restricciones de Sistema Kosher",
         "PayloadDescription": "Lista blanca de apps y restricciones de sistema.",
@@ -164,6 +173,7 @@ def generate_mobileconfig(
     if block_app_store:
         r["allowAppInstallation"] = False
         r["allowMarketplaceAppInstallation"] = False
+        r["allowWebDistributionAppInstallation"] = False  # iOS 17.5+ (UE): bloquea instalación desde sitios web
     if block_app_removal:
         r["allowAppRemoval"] = False
     if block_in_app_purchases:
@@ -199,6 +209,7 @@ def generate_mobileconfig(
     r["allowAppClips"] = False                            # App Clips abren contenido web
     r["allowAutomaticAppDownloads"] = False
     r["allowSpotlightInternetResults"] = False            # Spotlight no busca en internet
+    r["allowCloudPrivateRelay"] = False                   # iOS 15+: bloquea iCloud Private Relay para no evadir DNS
     r["allowSharedStream"] = False
     r["allowDiagnosticSubmission"] = False
     r["forceLimitAdTracking"] = True
@@ -213,7 +224,7 @@ def generate_mobileconfig(
     web = {
         "PayloadType": "com.apple.webcontent-filter",
         "PayloadVersion": 1,
-        "PayloadIdentifier": f"com.kosherlock.ios.webfilter.{wid}",
+        "PayloadIdentifier": WEBFILTER_IDENTIFIER,
         "PayloadUUID": wid,
         "PayloadDisplayName": "Filtro Web Kosher",
         "PayloadDescription": "Filtro integrado de iOS para navegación web.",
@@ -222,7 +233,9 @@ def generate_mobileconfig(
 
     web_needed = True
     if web_filter_mode == "block_all":
-        web["WhitelistedBookmarks"] = [{"URL": INERT_BOOKMARK_URL, "Title": "Bloqueado"}]
+        bm = [{"URL": INERT_BOOKMARK_URL, "Title": "Bloqueado"}]
+        web["AllowListBookmarks"] = bm
+        web["WhitelistedBookmarks"] = bm
     elif web_filter_mode == "whitelist":
         urls = [_normalize_url(u) for u in (allowed_urls or [])]
         urls = [u for u in urls if u]
@@ -230,7 +243,9 @@ def generate_mobileconfig(
             raise ProfileError(
                 "Elegiste 'Solo lista blanca' pero no escribiste ninguna URL permitida."
             )
-        web["WhitelistedBookmarks"] = [{"URL": u, "Title": u} for u in urls]
+        bm = [{"URL": u, "Title": u} for u in urls]
+        web["AllowListBookmarks"] = bm
+        web["WhitelistedBookmarks"] = bm
     elif web_filter_mode == "blacklist":
         domains = custom_blocked_domains
         if domains is None:
@@ -245,11 +260,19 @@ def generate_mobileconfig(
         deny = list(dict.fromkeys(deny))  # sin duplicados, conserva el orden
         if not deny:
             raise ProfileError("Elegiste bloquear dominios pero la lista está vacía.")
+        if len(deny) > 500:
+            raise ProfileError(
+                f"Apple limita el filtro de URLs a un máximo de 500 entradas (se generaron {len(deny)}). "
+                "Reduce la cantidad de dominios bloqueados."
+            )
+        web["DenyListURLs"] = deny
         web["BlacklistedURLs"] = deny
         web["AutoFilterEnabled"] = True  # filtro de contenido adulto de Apple
     else:  # none
         if block_whatsapp_status_channels:
-            web["BlacklistedURLs"] = list(WHATSAPP_WEB_LINKS_BLACKLIST)
+            deny = list(WHATSAPP_WEB_LINKS_BLACKLIST)
+            web["DenyListURLs"] = deny
+            web["BlacklistedURLs"] = deny
             web["AutoFilterEnabled"] = True
         else:
             web_needed = False
@@ -265,7 +288,7 @@ def generate_mobileconfig(
         dns = {
             "PayloadType": "com.apple.dnsSettings.managed",
             "PayloadVersion": 1,
-            "PayloadIdentifier": f"com.kosherlock.ios.dns.{did}",
+            "PayloadIdentifier": DNS_IDENTIFIER,
             "PayloadUUID": did,
             "PayloadDisplayName": "DNS Cifrado Kosher",
             "PayloadDescription": "Resolución DNS por un servidor con filtrado.",
@@ -295,7 +318,7 @@ def generate_mobileconfig(
     profile = {
         "PayloadType": "Configuration",
         "PayloadVersion": 1,
-        "PayloadIdentifier": f"com.kosherlock.ios.profile.{top_uuid}",
+        "PayloadIdentifier": PROFILE_IDENTIFIER,
         "PayloadUUID": top_uuid,
         "PayloadDisplayName": profile_name,
         "PayloadDescription": "Perfil Kosher generado por KosherLock iOS.",

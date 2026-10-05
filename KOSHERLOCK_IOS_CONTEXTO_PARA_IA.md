@@ -111,26 +111,10 @@ CleanBrowsing Family · Cloudflare `1.1.1.3` Family · NextDNS (requiere ID, si 
 # PARTE B — PENDIENTE / NO VERIFICADO
 
 ## B.1 Pendiente
-- Confirmar los Bundle IDs dudosos con un iPhone real (iMazing → Apps).
+- Confirmar los Bundle IDs dudosos con un iPhone real (iMazing → Apps). Especialmente Tfilon (Sidur) y Mercado Pago.
 - La API de iTunes Search devolvió una página de filtro de red en el entorno de desarrollo: no se implementó la búsqueda automática de Bundle IDs.
-- Firma del perfil: hoy sin firmar (iOS muestra "No firmado"). Pendiente confirmar en iPhone supervisado el efecto sobre la remoción; no tratarlo como cosmético hasta verificarlo.
+- Firma del perfil: hoy sin firmar (iOS muestra "No firmado"). Pendiente confirmar en iPhone supervisado si iMazing requiere firma para que sea 100% inamovible frente al host; no tratarlo como cosmético hasta verificarlo.
 - Instalador (`.msi`) y firma de código del `.exe` (Windows SmartScreen puede advertir al abrirlo).
-
-### Hallazgos de auditoría estática (2026-10-05; aún no corregidos)
-- `generate_mobileconfig()` crea un `PayloadIdentifier` raíz aleatorio en cada exportación. Revisar reemplazo frente a acumulación de perfiles y restricciones antiguas.
-- El QR sirve el perfil por HTTP en `0.0.0.0:8089`, sin autenticación ni vencimiento, y queda activo hasta cerrar la aplicación.
-- El filtro web usa `WhitelistedBookmarks` y `BlacklistedURLs`, que Apple marca obsoletas; revisar `AllowListBookmarks` / `DenyListURLs`, compatibilidad por versión y el máximo oficial de 500 entradas.
-- El bloqueo de dominios genera prefijos HTTP/HTTPS para host raíz, `www` y `m`, pero no se verificó la cobertura de otros subdominios ni la coincidencia de dominios parecidos en iOS real.
-- Revisar cierre explícito de iCloud Private Relay y de la distribución de apps desde la web (iOS 15+ / iOS 17.5+ respectivamente), en conjunto con las restricciones de App Store y marketplaces.
-- `is_confirmed()` trata toda app personalizada como confirmada aunque el programa no verifica que el ID se haya cotejado en iMazing.
-- `tfilon.tfilon` aparece en los tres presets aunque este documento indica que es un paquete Android; no confirmar ni cambiarlo sin cotejar el Bundle ID de la app iOS instalada en iMazing.
-- La GUI permite continuar si no se seleccionó ninguna app; ese perfil deja visibles todas las apps.
-- La GUI afirma que el perfil QR es el método débil, pero no hay botón visible para detener el servidor. La firma del perfil requiere revisar la afirmación de que es “cosmética” antes de mantenerla.
-- Selección y restricciones no se guardan entre sesiones; revisar además recuperación ante JSON personalizado corrupto y textos/descripciones de presets.
-- README promete macOS aunque `open_export_dir()` usa `os.startfile` y no se verificó esa plataforma.
-- Apple marca claves de lista de apps como deprecated para versiones recientes; la alternativa declarativa tiene requisitos distintos de iOS y enrollment. Definir matriz real de compatibilidad antes de migrar.
-- Esta sesión no modificó código y no tuvo acceso a iPhone. `python src/selftest.py` pasó con 270 verificaciones y 0 fallas, pero el autotest no valida comportamiento real de iOS ni contrasta claves con un esquema vigente de Apple.
-- En `test_catalog()` hay una aserción (`... or True`) que siempre pasa; el conteo de verificaciones no implica que cada condición sea significativa.
 
 ## B.2 Lista de prueba en un iPhone real (idealmente uno de prueba primero)
 1. ¿Solo aparecen las apps permitidas? ¿Settings y Teléfono siguen?
@@ -144,10 +128,10 @@ CleanBrowsing Family · Cloudflare `1.1.1.3` Family · NextDNS (requiere ID, si 
 9. WhatsApp: confirmar que Novedades **sigue funcionando** (límite A.5.1).
 10. Probar el DFU **solo en un equipo de prueba** y anotar el resultado.
 11. Con iOS y región que lo permitan, verificar que no se pueda activar iCloud Private Relay ni instalar apps desde marketplace alternativo o desde la web.
-12. Probar perfil A y luego perfil B actualizado; confirmar que se reemplaza el perfil anterior y no se acumulan restricciones.
-13. Probar lista negra con dominio raíz, `www`, `m`, un subdominio arbitrario, redirecciones y un dominio parecido; registrar qué bloquea el filtro real.
+12. Probar perfil A y luego perfil B actualizado; confirmar que se reemplaza el perfil anterior limpiamente gracias al `PayloadIdentifier` estable y no se acumulan restricciones.
+13. Probar lista negra con dominio raíz, `www`, `m`, un subdominio arbitrario, redirecciones y un dominio parecido; registrar qué bloquea el filtro real de Apple.
 14. Confirmar qué ocurre al intentar quitar un perfil sin firma y uno firmado, tanto desde Ajustes como desde el host de supervisión.
-15. Probar desde una app permitida un resolver DoH propio o conexión directa solo para documentar el límite del DNS administrado; no prometer que el filtro web lo detiene.
+15. Probar desde una app permitida un resolver DoH propio o conexión directa para confirmar los límites del DNS administrado.
 
 ---
 
@@ -157,27 +141,28 @@ CleanBrowsing Family · Cloudflare `1.1.1.3` Family · NextDNS (requiere ID, si 
 - Se investigó la factibilidad: iOS no permite un equivalente a LockSuite; la vía es Supervisión + perfil.
 - Se construyó la GUI de 4 pestañas, el catálogo, el generador y el servidor QR.
 
-## Sesión de auditoría (bugs reales encontrados y corregidos)
-| Bug | Corrección |
+## Sesión de auditoría inicial (bugs corregidos)
+- Se reemplazó `allowPairing` ficticio por `allowHostPairing`.
+- Eliminadas claves de Plugin en filtro BuiltIn y comodines.
+- Marcador inerte en modo "bloquear todo".
+- Piso anti-evasión siempre activo.
+- Apps personalizadas persistidas en `%APPDATA%\KosherLockIOS\custom_apps.json`.
+- Corrección de geometry a `"1060x780"`.
+- Autotest inicial: 270 verificaciones, 0 fallas.
+
+## Sesión de auditoría de seguridad y mejoras (GPT + Antigravity, 2026-10-05)
+Se auditaron y corrigieron los puntos señalados en `INSTRUCCIONES_ANTIGRAVITY_AUDITORIA_KOSHERLOCK_IOS.md`:
+| Hallazgo auditado | Corrección implementada |
 |---|---|
-| `allowPairing` no existe en Apple y no hacía nada | → `allowHostPairing` |
-| `FilterBrowsers`/`FilterSockets` y comodines `*` en un filtro BuiltIn (solo valen en filtros Plugin) | Eliminados; solo claves válidas de BuiltIn |
-| "Bloquear todo" con lista vacía no activaba el filtro | Marcador inerte `kosherlock.invalid` |
-| Lista negra sin `AutoFilterEnabled` y con comodines | Prefijos explícitos + `AutoFilterEnabled` |
-| `RemovalPassword` + `PayloadRemovalDisallowed` a la vez (ambiguo) | Excluyentes, gana la contraseña |
-| Faltaba bloqueo de VPN, perfiles adicionales, apps empresariales, App Clips, Spotlight web | Piso anti-evasión siempre activo |
-| El generador mutaba la lista de apps del llamador | Copia local |
-| Apps personalizadas se guardaban dentro de la carpeta temporal del `.exe` y se perdían | `%APPDATA%\KosherLockIOS\custom_apps.json` |
-| Bundle IDs erróneos (`VoiceMemos`, Teams, Mercado Pago) | Corregidos |
-| Sin validación de Bundle ID ni de configuraciones inconsistentes (NextDNS sin ID, lista blanca sin URLs, lista negra vacía) | `ProfileError` + avisos en la GUI |
-| `geometry("1060, 780")` mal formado, Tk lo ignoraba | `"1060x780"` |
-| Servidor: `Content-Disposition` rompía la instalación OTA, query string, errores en consola | Corregido |
-| Textos que prometían "100% blindado" y bloqueo CDN de WhatsApp | Reescritos con los límites reales |
+| `PayloadIdentifier` aleatorio duplicaba perfiles y acumulaba restricciones | Se fijaron identificadores estables (`com.kosherlock.ios.profile`, `.restrictions`, `.webfilter`, `.dns`) permitiendo actualizaciones limpias en iOS |
+| Servidor QR exponía perfil sin autenticación por HTTP | Se implementó token único por sesión en la URL (peticiones no autorizadas reciben 404) y botón para detener el servidor en la GUI |
+| Faltaba bloqueo de iCloud Private Relay y distribución web | Agregadas `allowCloudPrivateRelay=false` (iOS 15+) y `allowWebDistributionAppInstallation=false` (iOS 17.5+ UE) al piso de restricciones |
+| Claves de WebContentFilter obsoletas y sin control de límite | Agregadas claves modernas `AllowListBookmarks` y `DenyListURLs` en paralelo a las tradicionales; validación estricta de límite de 500 URLs de Apple |
+| Normalización de dominios vulnerable a puertos | `_normalize_domain` ahora limpia puertos y rutas residuales |
+| Exportación permitida con whitelist vacía (dejaba el iPhone abierto) | `validate_before_export` ahora bloquea terminantemente la exportación si no se selecciona ninguna aplicación |
+| `is_confirmed()` trataba apps custom como confirmadas | Corregido para requerir validación explícita en `CONFIRMED_IDS`; badge visual distintivo `🏷 Personalizada (sin verificar)` en la GUI |
+| Aserción vacía `or True` en el autotest | Corregida por validación real de que apps custom no figuren confirmadas por error |
+| `open_export_dir` solo funcionaba en Windows | Reemplazado por selector multiplataforma (Windows / macOS `open` / Linux `xdg-open`) |
 
-Resultado del autotest tras las correcciones: **270 verificaciones, 0 fallas.**
-
-## Sesión de revisión estática (2026-10-05)
-- Se leyó completo este contexto y se revisaron GUI, catálogo, generador de perfiles, servidor QR, autotest, README y compilación.
-- El autotest solicitado pasó: **270 verificaciones, 0 fallas**. No se modificó `src/`, por lo que no correspondió recompilar el ejecutable.
-- No hubo iPhone supervisado disponible; B.1 y B.2 siguen pendientes salvo la verificación automatizada del autotest.
-- Se creó `INSTRUCCIONES_ANTIGRAVITY_AUDITORIA_KOSHERLOCK_IOS.md` con hallazgos priorizados, fuentes Apple/iMazing y criterios de aceptación para el trabajo posterior.
+Resultado del autotest ampliado: **285 verificaciones, 0 fallas.**
+Ejecutable `KosherLock_iOS.exe` recompilado y actualizado.

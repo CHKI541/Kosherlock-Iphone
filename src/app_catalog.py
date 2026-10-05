@@ -422,9 +422,8 @@ CONFIRMED_IDS = {
 
 
 def is_confirmed(app):
-    """Una app es confiable si su ID está en la lista confirmada, o si el
-    usuario la agregó a mano (en ese caso el ID lo puso él mirando iMazing)."""
-    return app["id"] in CONFIRMED_IDS or bool(app.get("custom"))
+    """Una app solo está confirmada si su Bundle ID fue contrastado contra la App Store de Apple."""
+    return bool(app and app.get("id") in CONFIRMED_IDS)
 
 
 def data_dir():
@@ -448,6 +447,9 @@ class AppCatalogManager:
         try:
             with open(self.data_file, "r", encoding="utf-8") as f:
                 custom = json.load(f)
+            if not isinstance(custom, list):
+                print("El archivo custom_apps.json no contiene una lista válida.")
+                return
         except (OSError, ValueError) as e:
             print(f"Error cargando apps personalizadas: {e}")
             return
@@ -472,8 +474,10 @@ class AppCatalogManager:
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(custom, f, indent=2, ensure_ascii=False)
             os.replace(tmp, self.data_file)  # escritura atómica: no deja el JSON a medias
+            return True
         except OSError as e:
             print(f"Error guardando apps personalizadas: {e}")
+            return False
 
     def add_app(self, bundle_id, name, category="Personalizadas", description=""):
         bundle_id = bundle_id.strip()

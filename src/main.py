@@ -311,9 +311,10 @@ class KosherLockApp(ctk.CTk):
             badge.pack(side="left", padx=10)
 
             if not is_confirmed(app):
+                tag_text = " 🏷 Personalizada (sin verificar) " if app.get("custom") else " ⚠ ID sin confirmar "
                 ctk.CTkLabel(
                     title_row,
-                    text=" ⚠ ID sin confirmar ",
+                    text=tag_text,
                     font=ctk.CTkFont(size=11),
                     fg_color="#92400E",
                     corner_radius=4,
@@ -767,7 +768,18 @@ class KosherLockApp(ctk.CTk):
             hover_color="#059669",
             command=self.start_qr_server
         )
-        btn_qr.pack(fill="x", padx=20, pady=(0, 12))
+        btn_qr.pack(fill="x", padx=20, pady=(0, 8))
+
+        btn_stop_qr = ctk.CTkButton(
+            card_qr,
+            text="⏹ Detener Servidor QR",
+            font=ctk.CTkFont(size=13),
+            height=32,
+            fg_color="#334155",
+            hover_color="#475569",
+            command=self.stop_qr_server
+        )
+        btn_stop_qr.pack(fill="x", padx=20, pady=(0, 12))
 
         # Contenedor para mostrar la imagen del QR
         self.qr_display_frame = ctk.CTkFrame(card_qr, fg_color="#0F172A", corner_radius=8, height=220)
@@ -818,13 +830,14 @@ class KosherLockApp(ctk.CTk):
             if a["id"] in self.app_vars and self.app_vars[a["id"]].get()
         ]
         if not selected:
-            if not messagebox.askyesno(
+            messagebox.showerror(
                 "Lista blanca vacía",
-                "No tildaste ninguna app.\n\n"
-                "Sin lista blanca el iPhone seguirá mostrando TODAS sus apps "
-                "(solo se aplicarían los bloqueos de sistema).\n\n¿Continuar igual?"
-            ):
-                return False
+                "No has seleccionado ninguna aplicación.\n\n"
+                "Sin aplicaciones en la lista blanca, el iPhone NO ocultará ninguna aplicación "
+                "y todas las apps seguirán estando visibles y accesibles en la pantalla.\n\n"
+                "Para configurar un iPhone Kosher seguro, selecciona al menos una app permitida o utiliza un Preset."
+            )
+            return False
 
         dudosas = [a for a in selected if not is_confirmed(a)]
         if dudosas:
@@ -833,7 +846,7 @@ class KosherLockApp(ctk.CTk):
                 lista += f"\n  … y {len(dudosas) - 12} más"
             if not messagebox.askyesno(
                 "Bundle IDs sin confirmar",
-                "Estas apps están tildadas pero su Bundle ID no está confirmado:\n\n"
+                "Estas apps están tildadas pero su Bundle ID no está confirmado oficialmente:\n\n"
                 f"{lista}\n\n"
                 "Si el ID está mal, esa app quedará OCULTA en el iPhone aunque esté "
                 "instalada.\nConfirmá cada ID en iMazing → Apps (muestra el Bundle ID de "
@@ -890,7 +903,23 @@ class KosherLockApp(ctk.CTk):
     def open_export_dir(self):
         export_dir = getattr(self, "last_saved_dir", os.getcwd())
         if os.path.isdir(export_dir):
-            os.startfile(export_dir)
+            if sys.platform == "win32":
+                os.startfile(export_dir)
+            elif sys.platform == "darwin":
+                import subprocess
+                subprocess.run(["open", export_dir])
+            else:
+                import subprocess
+                subprocess.run(["xdg-open", export_dir])
+
+    def stop_qr_server(self):
+        self.server_mgr.stop()
+        self.qr_image_label.configure(
+            image=None,
+            text="Servidor detenido.\nPresiona 'Generar Código QR' para iniciar uno nuevo."
+        )
+        self.qr_image_label.image = None
+        self.status_bar.configure(text="Servidor QR detenido. Puerto cerrado.")
 
     def start_qr_server(self):
         data = self.build_profile_bytes()
