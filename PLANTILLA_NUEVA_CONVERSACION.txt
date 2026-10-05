@@ -1,0 +1,18 @@
+================================================================================
+PLANTILLA PARA EL PRINCIPIO DE UNA CONVERSACIÓN NUEVA
+(Para usar al abrir un chat con cualquier IA: Antigravity, Claude, ChatGPT, etc.)
+================================================================================
+
+Leé primero KOSHERLOCK_IOS_CONTEXTO_PARA_IA.md completo. Hoy quiero: [TAREA PUNTUAL AQUÍ].
+Si toca temas de restricciones, lista blanca de apps, confirmación de Bundle IDs o pruebas con iPhone real, revisá detenidamente las secciones B.1 y B.2 antes de tocar código.
+
+Antes de cerrar la sesión:
+1) Ejecutá el autotest: `python src/selftest.py` y asegurate de que pase con 0 fallas.
+2) Si modificaste código fuente en `src/`, recompilá el ejecutable corriendo `powershell -ExecutionPolicy Bypass -File .\build.ps1` para que `KosherLock_iOS.exe` quede actualizado.
+3) Actualizá KOSHERLOCK_IOS_CONTEXTO_PARA_IA.md:
+   - En la Parte B (Pendiente / No verificado) tachá o marcá lo resuelto/confirmado en equipo real, y agregá cualquier nuevo hallazgo o limitación encontrada.
+   - En la Parte C (Bitácora) agregá el resumen conciso de los cambios de esta sesión.
+4) Si dejaste algo funcionando, hacé un commit en git con un mensaje claro que explique qué cambiaste y por qué.
+5) Si algo no lo pudiste resolver o requiere confirmación física con un dispositivo, dejá instrucciones y pasos claros para continuar.
+
+================================================================================
