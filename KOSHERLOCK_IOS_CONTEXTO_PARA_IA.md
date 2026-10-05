@@ -113,8 +113,24 @@ CleanBrowsing Family · Cloudflare `1.1.1.3` Family · NextDNS (requiere ID, si 
 ## B.1 Pendiente
 - Confirmar los Bundle IDs dudosos con un iPhone real (iMazing → Apps).
 - La API de iTunes Search devolvió una página de filtro de red en el entorno de desarrollo: no se implementó la búsqueda automática de Bundle IDs.
-- Firma del perfil (hoy sin firmar: iOS muestra "No firmado"). Cosmético, no afecta la función.
+- Firma del perfil: hoy sin firmar (iOS muestra "No firmado"). Pendiente confirmar en iPhone supervisado el efecto sobre la remoción; no tratarlo como cosmético hasta verificarlo.
 - Instalador (`.msi`) y firma de código del `.exe` (Windows SmartScreen puede advertir al abrirlo).
+
+### Hallazgos de auditoría estática (2026-10-05; aún no corregidos)
+- `generate_mobileconfig()` crea un `PayloadIdentifier` raíz aleatorio en cada exportación. Revisar reemplazo frente a acumulación de perfiles y restricciones antiguas.
+- El QR sirve el perfil por HTTP en `0.0.0.0:8089`, sin autenticación ni vencimiento, y queda activo hasta cerrar la aplicación.
+- El filtro web usa `WhitelistedBookmarks` y `BlacklistedURLs`, que Apple marca obsoletas; revisar `AllowListBookmarks` / `DenyListURLs`, compatibilidad por versión y el máximo oficial de 500 entradas.
+- El bloqueo de dominios genera prefijos HTTP/HTTPS para host raíz, `www` y `m`, pero no se verificó la cobertura de otros subdominios ni la coincidencia de dominios parecidos en iOS real.
+- Revisar cierre explícito de iCloud Private Relay y de la distribución de apps desde la web (iOS 15+ / iOS 17.5+ respectivamente), en conjunto con las restricciones de App Store y marketplaces.
+- `is_confirmed()` trata toda app personalizada como confirmada aunque el programa no verifica que el ID se haya cotejado en iMazing.
+- `tfilon.tfilon` aparece en los tres presets aunque este documento indica que es un paquete Android; no confirmar ni cambiarlo sin cotejar el Bundle ID de la app iOS instalada en iMazing.
+- La GUI permite continuar si no se seleccionó ninguna app; ese perfil deja visibles todas las apps.
+- La GUI afirma que el perfil QR es el método débil, pero no hay botón visible para detener el servidor. La firma del perfil requiere revisar la afirmación de que es “cosmética” antes de mantenerla.
+- Selección y restricciones no se guardan entre sesiones; revisar además recuperación ante JSON personalizado corrupto y textos/descripciones de presets.
+- README promete macOS aunque `open_export_dir()` usa `os.startfile` y no se verificó esa plataforma.
+- Apple marca claves de lista de apps como deprecated para versiones recientes; la alternativa declarativa tiene requisitos distintos de iOS y enrollment. Definir matriz real de compatibilidad antes de migrar.
+- Esta sesión no modificó código y no tuvo acceso a iPhone. `python src/selftest.py` pasó con 270 verificaciones y 0 fallas, pero el autotest no valida comportamiento real de iOS ni contrasta claves con un esquema vigente de Apple.
+- En `test_catalog()` hay una aserción (`... or True`) que siempre pasa; el conteo de verificaciones no implica que cada condición sea significativa.
 
 ## B.2 Lista de prueba en un iPhone real (idealmente uno de prueba primero)
 1. ¿Solo aparecen las apps permitidas? ¿Settings y Teléfono siguen?
@@ -127,6 +143,11 @@ CleanBrowsing Family · Cloudflare `1.1.1.3` Family · NextDNS (requiere ID, si 
 8. DNS: abrir un sitio de prueba de filtrado de CleanBrowsing.
 9. WhatsApp: confirmar que Novedades **sigue funcionando** (límite A.5.1).
 10. Probar el DFU **solo en un equipo de prueba** y anotar el resultado.
+11. Con iOS y región que lo permitan, verificar que no se pueda activar iCloud Private Relay ni instalar apps desde marketplace alternativo o desde la web.
+12. Probar perfil A y luego perfil B actualizado; confirmar que se reemplaza el perfil anterior y no se acumulan restricciones.
+13. Probar lista negra con dominio raíz, `www`, `m`, un subdominio arbitrario, redirecciones y un dominio parecido; registrar qué bloquea el filtro real.
+14. Confirmar qué ocurre al intentar quitar un perfil sin firma y uno firmado, tanto desde Ajustes como desde el host de supervisión.
+15. Probar desde una app permitida un resolver DoH propio o conexión directa solo para documentar el límite del DNS administrado; no prometer que el filtro web lo detiene.
 
 ---
 
@@ -154,3 +175,9 @@ CleanBrowsing Family · Cloudflare `1.1.1.3` Family · NextDNS (requiere ID, si 
 | Textos que prometían "100% blindado" y bloqueo CDN de WhatsApp | Reescritos con los límites reales |
 
 Resultado del autotest tras las correcciones: **270 verificaciones, 0 fallas.**
+
+## Sesión de revisión estática (2026-10-05)
+- Se leyó completo este contexto y se revisaron GUI, catálogo, generador de perfiles, servidor QR, autotest, README y compilación.
+- El autotest solicitado pasó: **270 verificaciones, 0 fallas**. No se modificó `src/`, por lo que no correspondió recompilar el ejecutable.
+- No hubo iPhone supervisado disponible; B.1 y B.2 siguen pendientes salvo la verificación automatizada del autotest.
+- Se creó `INSTRUCCIONES_ANTIGRAVITY_AUDITORIA_KOSHERLOCK_IOS.md` con hallazgos priorizados, fuentes Apple/iMazing y criterios de aceptación para el trabajo posterior.
